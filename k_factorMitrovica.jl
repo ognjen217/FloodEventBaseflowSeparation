@@ -1,0 +1,761 @@
+using LinearAlgebra, Plots, DifferentialEquations
+using Pkg, DataFrames, ForwardDiff
+using DelimitedFiles, Optim
+using LinearRegression
+using GLM, CSV, LinearInterpolations
+using LsqFit
+using StatsBase
+using Trapz
+using DataInterpolations
+
+
+function export_as_csv_file(vectort, vector0, vector1, vector2, vector3, filename)
+    data = DataFrame(Vector = vectort, VectorQ = interp_za_Q.(turn_pts_indx), Vector0 = vector0, Vector1 = vector1,
+                 Vector2 = vector2, Vector3 = vector3)
+
+    CSV.write(filename, data)
+end
+
+function export_as_csv_file(vectort, vector0, filename)
+    data = DataFrame(T_for_passed_points_high_res = vectort, Q_for_passed_points_high_res = vector0)
+    CSV.write(filename, data)
+end
+
+function export_as_csv_file(vectort, vectorR, vectorK_Star, vectorK, filename)
+    data = DataFrame(T = vectort, vecR = vectorR, vecKstar = vectorK_Star, vecK = vectorK)
+    CSV.write(filename, data)
+end
+
+function export_as_csv_file(vectort, vector0, vector1, vector2, vector3, filename)
+    data = DataFrame(VectorT = vectort, VectorQ = BFI .* Q, VectorEkh1 = vector0, VectorEkh2 = vector1,
+                 VectorEkh3 = vector2, VectorEkh4 = vector3)
+    CSV.write(filename, data)
+end
+
+# Define the Q data vector
+Q = readdlm("D:\\DOCs, PDFs\\011 ExtremeClimTwin Project (2023)\\eventDataStations\\AprilMajMitrovicaQ.csv")
+
+Q = vec(Q)
+t = readdlm("D:\\DOCs, PDFs\\011 ExtremeClimTwin Project (2023)\\eventDataStations\\AprilMajMitrovicaT.csv")
+t = vec(t)
+# Compute the derivative of Q with respect to time using finite differences
+
+interp_za_Q = LinearInterpolation(Q,t)
+t = 0:0.0833:t[end]
+
+Q = interp_za_Q.(t)
+
+dQdt = diff(Q) ./ diff(t)
+# Reshape the data for use with LinearRegression.jl
+X = reshape(t[1:end-1], :, 1)
+Y = reshape(dQdt, :, 1)
+
+X = vec(X)
+Y = vec(Y)
+# Fit a linear model to the data
+linReg = linregress(X, Y)
+
+# Extract the slope of the linear model and compute the coefficient k
+slope = coef(linReg)[1]
+k = -1 / Q[1] * slope
+
+####### estamination of model's accuracy ##########
+
+
+Q_est = []
+T = 1:1:length(t)
+
+##end
+for i in 2:1:length(t)-1
+    est = Q[i-1] * exp(k * (-1) * t[i] * 3)
+    push!(Q_est, est)
+end
+
+plot(t[2:end-1], Q_est)
+plot!(t,Q)
+#print(Q_est./maximum(Q_est))
+r2 = 1/2 .* (Q[2:end-1] .- Q_est).^2
+mean(r2) / length(r2)
+
+#r2_score(Q_est, Q)
+
+r2_normalised = r2/maximum(r2)
+r2_MA_threshold_value = 0.9
+r2_filtered = r2[r2 .> r2_MA_threshold_value]
+r2_plottable = (1 .- r2_normalised)
+
+#=plotter part=#
+
+#=export=#
+
+export_as_csv_file(t[2:end-1], r2_plottable, k_values_normalised, k, "r_kStar_k_mitrovica.csv")
+
+plot1 = plot( t, (Q ./ maximum(Q)), xlabel = " ", ylabel = " ", linecolor = :red, linewidth = 2, line=(:dashdot, 2), size=(1110,600), label = false)
+plot1
+
+plot1 = plot(t[1:end-2], [(Q ./ maximum(Q))[1:end-2], r2_plottable], xlabel = "t", ylabel = "r2", linewidth = 1.2, label=false)
+plot1 = plot!(twinx(plot1), label=["Q" "r"])
+plot!(legend=:upleft, legendcolumns=3)
+
+plot!(t[1:end-1], r2_plottable)
+#plot((Q_est ./ maximum(Q_est)))
+t1 = t[2:end]
+matx = [t1 Q_est[1:end-1]]
+#plot(Q_est./maximum(Q_est))
+
+savefig("myplot.png")
+
+function find_k(Q::Vector{Float64})
+    l = length(Q)
+    k_values1 = Float64[]
+    for i in 2:1:length(t)-1
+        dQdt = (Q[i] - Q[i-1]) / (t[i] - t[i-1]) 
+        k = -1 / Q[i] * dQdt
+        push!(k_values1, k)
+    end
+    return k_values1
+end
+
+k_values = vec(find_k(vec(Q)))
+
+function normalize_values(v::Vector{T}) where T<:Real
+    # find minimum and maximum values
+    min_value = -minimum(v)
+    max_value = maximum(v)
+    # normalize the values
+    normalized_val = [];
+    for i in eachindex(v) 
+        if v[i] < 0
+            v[i] = v[i] / min_value
+        elseif v[i] > 0
+            v[i] = v[i] / max_value
+        end
+    end    
+    return v
+end
+
+k_values_normalised = normalize_values(k_values)
+k_values_normalised = k_values ./ maximum(k_values)
+ukupna_greska_racuna = 1/2 * sum((Q_est .- Q[2:end-1]) .^ 2)
+ukupna_greska_racuna_in_perc = ukupna_greska_racuna ./ sum(Q)
+
+
+plot2 
+
+
+plot2 = plot(t[3:end-1], [(Q ./ maximum(Q))[3:end-1], k_values[1:end-1]], xlabel = "t" ,ylabel = "k", linewidth = 1.2, label = false)
+
+plot2 = plot!(twinx(plot2), t, (Q ./ maximum(Q)), linecolor = :"red", linewidth = 2.3, line=(:dashdot), size=(1110,600))
+
+
+#recessing/rising points:
+# =k*= :
+
+k_star = change_rate_of_k_factor = (diff(vec(k_values)) ./ diff(vec(t[2:end-1])))
+
+
+plot3 = plot!(twinx(), t[2:end-2], Q[2:end-2], label = false, )
+
+plot3 = plot(t[2:end-2], k_star_normalised, linecolor=:"#DF7042",  xlabel = "t", ylabel = "k*", linewidth = 1.2, label = false)
+k_star_normalised = k_star./maximum(k_star)
+
+function select_data_points(k_values, k_star, r, Q, t)
+    selected_time_points = Float64[]
+    selected_Q_values = Float64[]
+
+    for i in eachindex(k_star)
+        if (((-(k_values[i]) < 0) && (abs(k_star[i])) < 0.15)) && r[i] < 0.014
+            push!(selected_time_points, t[i])
+            push!(selected_Q_values, Q[i])
+        end
+
+        if i-1 == 0
+            continue
+        elseif i+1 == length(k_star)
+            continue
+        else
+            if Q[i] < Q[i+1] 
+                if Q[i] > Q[i+1]
+                    push!(selected_Q_values, Q[i])
+                    push!(selected_time_points, t[i])
+                end
+            end
+        end
+    end
+
+    return selected_time_points, selected_Q_values
+end
+
+turn_pts_indx, turn_pts_Q = select_data_points(k_values, k_star, r2_normalised, Q[2:end-1], t[2:end-1])
+plot!(twinx(), t[2:end-1], 1 .- r2_normalised, linecolor=:orange)
+
+scatter!(turn_pts_indx, turn_pts_Q, label="Vremenski trenuci")
+#plot(turn_pts_indx, turn_pts_Q)
+plot(t, Q, label = "Proticaj")
+#plot!(twinx(),t[2:end-2], k_star)
+
+export_as_csv_file(turn_pts_indx, turn_pts_Q, "tacke_koje_su_prosle_k_mitrovitza.csv")
+
+savefig("passed_Q_points")
+function find_local_maxima(Q, t, r2)
+    maxima_values = Float64[]
+    maxima_time_points = Float64[]
+    
+    for i in 2:length(Q)-1
+        if  Q[i-1] < Q[i] 
+            if Q[i] > Q[i+1]
+                
+                push!(maxima_values, Q[i])
+                push!(maxima_time_points, t[i])
+                
+            end
+        end
+    end
+    
+    return maxima_values, maxima_time_points
+end
+
+maxima_values, maxima_time_points = find_local_maxima(Q, t, r2)
+scatter(maxima_time_points, maxima_values, markersize = 1)
+plot!(t,Q)
+
+function find_local_minimum(Q, t)
+    minima_values = Float64[]
+    minima_time_points = Float64[]
+    
+    for i in 2:length(t)-1
+        if Q[i] < Q[i-1]
+            if Q[i] < Q[i+1] 
+                push!(minima_values, Q[i])
+                push!(minima_time_points, t[i])
+            end 
+        end
+    end
+    
+    return minima_values, minima_time_points
+end
+
+minima_values, minima_time_points = find_local_minimum(Q, t)
+scatter!(minima_time_points, minima_values,  markersize = 1)
+t_k_star = t[2:end-2]
+change_rate_of_k_factor_plottable = normalize_values(change_rate_of_k_factor)
+plot(t_k_star[75 .< t_k_star .< 105], change_rate_of_k_factor[75 .< t_k_star .< 105])
+plot!(t[75 .< t .< 105], (Q ./ maximum(Q))[75 .< t .< 105], linewidth = 1, linecolor = :red,line=(:dashdot, 1))
+plot3 = plot(t[2:end-2], [(Q ./ maximum(Q))[2:end-2], change_rate_of_k_factor_plottable], xlabel = "t" ,ylabel = "k*", linewidth = 1.2, label=["Q" "k*"])
+
+
+max_k_star = Float64[]
+t_mask_k_star = 75 .< t .< 105
+for i in eachindex(t[t_mask_k_star])
+    push!(max_k_star, 5 * 10^(-5))
+end
+
+plot!(t[t_mask_k_star], max_k_star)
+plot!(t[t_mask_k_star], 0 .- max_k_star)
+#=plotter=#
+plot3x1 = plot(plot2, plot3, plot1, layout=(3,1), size=(1000,800))
+savefig("3x1plot.png")
+
+scatter!(t,Q)
+
+scatter(t_k_star, (Q[2:end-2])[abs.(change_rate_of_k_factor_plottable) .< 5e-5])
+
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+
+
+#i)
+
+function exp_fit(t, k)
+    return Q[1] .* exp.(-k .* t)
+end
+
+# initial guess for k
+k_guess = 0.9
+
+# perform the fit
+fit = curve_fit(exp_fit, t, Q, [k_guess])
+
+# extract the fitted value of k
+k_fit = fit.param[1]
+J_fit = fit.jacobian
+# print the fitted value of k
+println("Fitted value of k = ", k_fit)
+
+A = exp(-k_fit) #a value
+k_star_t =  exp.(k .* t)
+scatter(Q, abs.(dQdt), xlabel="Q", ylabel="dQdt")
+
+#plot(dQdt) 
+#plot!(Q, k_fit .* dqdQ) 
+
+pl = plot(t, Q .* exp.(k_fit .* t), label="procenjeno Q na osnovu identif K")
+plot!(twinx(pl), t, Q ./ maximum(Q), linewidth = 2, linecolor = :purple, line=(:dashdot, 1), label="Realno Q")
+
+e = Q .- exp_fit(t, k)
+r2_za_K = 1/2 .* (Q .- Q[1] .* exp.(k_fit .* t)).^2
+
+#r2_score(Q_est, Q)
+
+r2_normalised_za_K = r2_za_K/maximum(r2)
+r2_MA_threshold_value_za_K = 0.95
+r2_filtered_za_K = r2_za_K[r2_za_K .> r2_MA_threshold_value]
+r2_plottable_za_K = (1 .- r2_normalised_za_K)
+
+pl1 = plot!(twinx(pl), t, r2_plottable_za_K./maximum(r2_plottable_za_K), linewidth = 2.1, linecolor = :grey, line=(:dot, 1), label = "greska procene", )
+savefig(pl1, "QvsQestVSr2")
+
+############################################
+############################################
+############################################
+############################################
+#III)) 
+############################################
+############################################
+############################################
+############################################
+############################################
+
+
+function find_maxima_and_fill_period(values, t)
+    numb_of_values = length(values)
+    maxima = []
+    maxima_time_stamps = []
+    Qm = Float64[]
+    tb_te = Float64[]
+    indexes = []
+
+    for i in 2:numb_of_values-1
+        if values[i] > values[i-1] && values[i] > values[i+1]
+            push!(maxima, values[i])
+            push!(maxima_time_stamps, t[i])
+            push!(indexes, t[i])
+        end
+    end
+
+    ##matrix_circuit_beaker_simulator
+    
+    te = (maxima_time_stamps[1] + maxima_time_stamps[2]) / 2
+    tb = maxima_time_stamps[1] - te
+    push!(Qm, maxima[1])
+    push!(Qm, maxima[1])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(tb_te, te-eps(Float64))
+
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[2] + maxima_time_stamps[3]) / 2
+    push!(Qm, maxima[2])
+    push!(Qm, maxima[2])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[3] + maxima_time_stamps[4]) / 2
+    push!(Qm, maxima[3])
+    push!(Qm, maxima[3])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+
+
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[4] + maxima_time_stamps[5]) / 2
+    push!(Qm, maxima[4])
+    push!(Qm, maxima[4])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[5] + maxima_time_stamps[6]) / 2
+    push!(Qm, maxima[5])
+    push!(Qm, maxima[5])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+    
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[6] + maxima_time_stamps[7]) / 2
+    push!(Qm, maxima[6])
+    push!(Qm, maxima[6])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+    
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[7] + maxima_time_stamps[8]) / 2 
+    push!(Qm, maxima[7])
+    push!(Qm, maxima[7])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+    
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[8] + maxima_time_stamps[9]) / 2 
+    push!(Qm, maxima[8])
+    push!(Qm, maxima[8])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+ 
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[9] + maxima_time_stamps[10]) / 2 
+    push!(Qm, maxima[9])
+    push!(Qm, maxima[9])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+    
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[10] + maxima_time_stamps[11])/2
+    push!(Qm, maxima[10])
+    push!(Qm, maxima[10])
+    print("izlaz", Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[11] + maxima_time_stamps[12])/2
+    push!(Qm, maxima[11])
+    push!(Qm, maxima[11])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+
+    tb = te + eps(Float64)
+    te = (maxima_time_stamps[12] + maxima_time_stamps[13])/2
+    push!(Qm, maxima[12])
+    push!(Qm, maxima[12])
+    print("izlaz", Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+
+
+    tb = te + eps(Float64)
+    te = maxima_time_stamps[13] + (maxima_time_stamps[13]-tb) 
+    push!(Qm, maxima[13])
+    push!(Qm, maxima[13])
+    print("izlaz",Qm)
+    push!(tb_te, tb+eps(Float64))
+    push!(indexes, tb)
+    push!(tb_te, te-eps(Float64))
+
+
+    return Qm, tb_te, indexes
+end
+
+matr = find_maxima_and_fill_period(Q, t)
+
+Qn = Qm = vec(matr[1])
+push!(Qn, minimum(Q))
+tm = vec(matr[2])
+
+tm[1] = 0
+push!(tm, tm[length(tm)])
+indexes = vec(matr[3 ])
+
+pl1 = plot(t,Q);
+plot!(tm, Qm)
+#scatter!(tm, Q)
+savefig("searcing_windows")
+
+function calculate_bRDF(a, bfi, QQ, t)
+    bRDF = Float64[] # Create an empty array to store the calculated bRDF values
+    resize!(bRDF, length(QQ))
+    # Calculate bRDF values for each time step
+    for i = 1:length(t)-1
+        if i == 1
+            bRDF[i] = QQ[i]  # Initial value at time t = 1
+        else
+            bRDF[i] = (a * (1 - bfi)) / (1 - a * bfi) * bRDF[i-1] + ((1 - a) * bfi) / (1 - a * BFI) * QQ[i]
+        end
+    end
+
+    println(bRDF)
+    return bRDF
+
+end
+
+result = calculate_bRDF(A, BFI, Qn, tm)
+
+plot(tm, min(result / maximum(result) .* Qn, passed_Q_points))
+
+int_za_Qn_za_passed_points = LinearInterpolation(t, Qn)
+
+plot!(tm, result / maximum(result) .* Qn)
+plot!(t, Q)
+plot(t, BFI .* Q)
+
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+
+#odredjivanje funkcije raspodele#### CDF
+
+
+Q_sorted = sort(Q)
+itr = ecdf(Q_sorted)
+n = length(Q_sorted)
+mean_flow = mean(Q_sorted)
+
+quantile(Q_sorted, 0.5; sorted=true)
+
+bl = q_below = quantile(Q_sorted, 0.06)
+bu = q_above = quantile(Q_sorted, 0.95)
+
+function envelope_times_BFI()
+    b_en = Float64[]
+    for flowdata in Qn
+        if (BFI * flowdata) >= bu
+            push!(b_en, bu)
+        elseif (BFI * flowdata) <= bl
+            push!(b_en, bl)
+        else
+            push!(b_en, BFI * flowdata)
+        end
+    end
+
+    return b_en
+end
+
+b_en = envelope_times_BFI()
+b_enInterp = LinearInterpolation(b_en, tm)
+
+t_cpy = tm
+push!(t_cpy, t[end])
+b_en_cpy = b_en
+push!(b_en_cpy, Q[end])
+
+b_en_interp = b_enInterp.(t)
+
+plot!(t, min.(b_en_interp, Q))
+
+plot!(tm, b_en) #nema turning points-a ispod baseflow nivoa
+plot(t, Q)
+
+#pretraga za turning points
+
+b_en_inter_za_turning_points = b_enInterp.(turn_pts_indx)
+
+scatter!(turn_pts_indx, b_en_inter_za_turning_points)
+
+function check_lower_values(turn_pts_Q, b_en_inter_za_turning_points, turn_pts_indx)
+    lower_values = []
+    lower_time = []
+
+    for i in eachindex(turn_pts_Q)
+        if turn_pts_Q[i] < b_en_inter_za_turning_points[i]
+            push!(lower_values, turn_pts_Q[i])
+            push!(lower_time, turn_pts_indx[i])
+        end
+    end
+
+    return  lower_time, lower_values
+end
+
+
+turn_pts_indx_passed, b_en_turning_points_passed = check_lower_values(turn_pts_Q, b_en_inter_za_turning_points, turn_pts_indx)
+
+
+scatter!(turn_pts_indx, b_en_inter_za_turning_points)
+
+b_en_Turning_points = b_en_inter_za_turning_points
+scatter!(turn_pts_indx_passed, b_en_turning_points_passed)
+
+plot!(turn_pts_indx_passed, b_en_turning_points_passed, linewidth = 2, linecolor = :orange, line=(:dashdot, 1))
+
+b_en_Turning_points_INTERP = LinearInterpolation(b_en_Turning_points, turn_pts_indx)
+b_en_Turning_points_interpolated = b_en_Turning_points_INTERP.(t)
+b_en_Turning_points_below_FLOW = b_en_Turning_points_interpolated
+plot!(t, b_en_Turning_points_below_FLOW, linewidth = 2.5, linecolor = :black, line=(:dot, 1))
+
+plot!(t[40 .< t .< 110],Q[40 .< t .< 110], label = "Q", linecolor=:blue)
+
+plot(t, Q)
+b_rck = calculate_bRDF(A, BFI, b_en_inter_za_turning_points, turn_pts_indx)
+plot!(turn_pts_indx[30 .< turn_pts_indx .< 120],b_rck[30 .< turn_pts_indx .< 120], line=(:dashdot, 0.5),label = "Iteracija 1") 
+
+b_rck1 = calculate_bRDF(A, BFI, b_rck, turn_pts_indx)
+plot!(turn_pts_indx[40 .< turn_pts_indx .< 110], b_rck1[40 .< turn_pts_indx .< 110],line=(:dashdot, 0.5), label = "Iteracija 2") 
+
+b_rck2 = calculate_bRDF(A, BFI, b_rck1, turn_pts_indx)
+plot!(turn_pts_indx[40 .< turn_pts_indx .< 110], b_rck2[40 .< turn_pts_indx .< 110],line=(:dashdot, 0.5), label = "Iteracija 3") 
+
+b_rck3 = calculate_bRDF(A, BFI, b_rck2, turn_pts_indx)
+plot!(turn_pts_indx[40 .< turn_pts_indx .< 110], b_rck3[40 .< turn_pts_indx .< 110],line=(:dashdot, 0.5), label = "Iteracija 4") 
+
+b_rck4 = calculate_bRDF(A, BFI, b_rck3, turn_pts_indx)
+plot!(turn_pts_indx[40 .< turn_pts_indx .< 110], b_rck4[40 .< turn_pts_indx .< 110],line=(:dashdot, 0.5), label = "Iteracija 5") 
+
+avg_bRCK4 = (b_rck1 .+ b_rck2 .+ b_rck3 .+ b_rck4) ./ 4
+plot!(turn_pts_indx[40 .< turn_pts_indx .< 110],avg_bRCK4[40 .< turn_pts_indx .< 110], label = "Prosek iteracija 1-5", line=(:dot, 4))
+
+savefig("EventSeparated1-5")
+plot
+
+b_rck5 = calculate_bRDF(A, BFI, b_rck4, turn_pts_indx)
+plot!(turn_pts_indx[40 .< turn_pts_indx .< 110], b_rck5[40 .< turn_pts_indx .< 110],line=(:dashdot, 0.5), label = "Iteracija 6") 
+
+b_rck6 = calculate_bRDF(A, BFI, b_rck5, turn_pts_indx)
+plot!(turn_pts_indx,b_rck6)
+
+######################################################
+######################################################
+######################################################
+######################################################
+######################################################
+##############################################################################
+##############################################################################
+
+##pronalazenje BFI
+
+######################################
+#####################################
+
+function find_local_minima(data::Vector{T}, time_points::Vector{S}) where {T, S}
+    
+    n = length(data)
+    minima_values = Vector{T}()
+    minima_indices = Vector{Int}()
+
+    for i in 3:5:n-2
+        subvector = data[i-2:i+2]
+        min_index = argmin(subvector)
+
+        push!(minima_values, subvector[min_index])
+        push!(minima_indices, i-2+min_index)
+    end
+
+    return minima_values, minima_indices
+end
+
+function filter_data(data::Vector{Float64}, time_points::Vector{Int64})
+    n = length(data)
+    filtered_data = Vector{Float64}()
+    filtered_time_points = Vector{Float64}()
+
+    for i in 2:n-1
+        if 0.9 * data[i] < min(data[i-1], data[i+1])
+            push!(filtered_data, data[i])
+            push!(filtered_time_points, time_points[i])
+        end
+    end
+
+    return filtered_data, filtered_time_points
+end
+######################################
+
+mitrovicaBASE = readdlm("D:\\DOCs, PDFs\\011 ExtremeClimTwin Project (2023)\\JuliaDevelopment\\mitrovicaSVE.csv")
+t_indx = []
+
+for i in eachindex(mitrovicaBASE)
+    push!(t_indx, i)
+end
+
+local_minima_with_time_values = find_local_minima(vec(mitrovicaBASE), vec(t_indx))
+values_of_minima              = local_minima_with_time_values[1] 
+values_of_time                = local_minima_with_time_values[2]
+filtered_data                 = filter_data(values_of_minima, values_of_time)
+filtered_base                 = filtered_data[1]
+filtered_base_time            = filtered_data[2]  
+tttt = 1:1:length(mitrovicaBASE)
+t_indx
+
+plot!(filtered_base_time[ 1650 .< filtered_base_time .< 2200], filtered_base[1650 .<filtered_base_time.<2200])
+plot(tttt[1650 .<tttt .< 2200], mitrovicaBASE[1650 .<tttt .< 2200], label = "Proticaj")
+
+#Qb 
+########################################################
+########################################################
+########################################################
+########################################################
+########################################################
+########################################################
+########################################################
+########################################################
+
+
+interp = LinearInterpolation(filtered_base, filtered_base_time)
+filtered_base_interpolated = interp.(t_indx)
+
+
+# Find the minimum value at each time point
+min_values_of_flow_BASEEEEE = [min(val1, val2) for (val1, val2) in zip(filtered_base_interpolated, mitrovicaBASE)]
+
+plot(t_indx[1650 .< t_indx .< 2200], min_values_of_flow_BASEEEEE[1650 .< t_indx .< 2200], label = "UKIH")
+plot!(t_indx, filtered_base_interpolated)
+savefig("UKIH_1650-2200")
+sum(min_values_of_flow_BASEEEEE ./ mitrovicaBASE) / length(mitrovicaBASE)
+
+mitrovicaBASE = vec(mitrovicaBASE)
+t_indx_vec = Float64[]
+
+for i in eachindex(t_indx) 
+    push!(t_indx_vec, t_indx[i])
+end
+
+flow_interp_for_integr = LinearInterpolation(mitrovicaBASE, t_indx_vec)
+
+mitrovicaBASE_high_freq = flow_interp_for_integr.(1:0.001:length(t_indx_vec))
+baseflow_high_freq = interp.(1:0.001:length(t_indx_vec))
+
+BFI = sum(baseflow_high_freq ./ mitrovicaBASE_high_freq) / length(mitrovicaBASE_high_freq)
+
+#########################################
+#########################################
+#########################################
+#########################################
+
+plot!(t, BFI*Q)
+brckQ = calculate_bRDF(A, BFI, BFI * Q, t)
+brckQ1 = calculate_bRDF(A, BFI, brckQ, t)
+brckQ2 = calculate_bRDF(A, BFI, brckQ1, t)
+brckQ3 = calculate_bRDF(A, BFI, brckQ2, t)
+brckQ4 = calculate_bRDF(A, BFI, brckQ3, t)
+brckQ5 = calculate_bRDF(A, BFI, brckQ4, t)
+
+plot!(t, brckQ)
+plot!(t[1:end-20],((brckQ .+ b_rck1) ./ 6)[1:end-20], line=(:dot, 4))
+plot!(t[1:end-20], brckQ1[1:end-20])
+plot!(t[1:end-20], brckQ2[1:end-20])
+plot!(t[1:end-20], brckQ3[1:end-20])
+plot!(t[1:end-20], brckQ4[1:end-20])
+plot!(t[1:end-20], brckQ5[1:end-20])
+
+avg_brckQ = brckQ[1:end-20] .+ brckQ1[1:end-20] .+  brckQ2[1:end-20] .+ brckQ3[1:end-20] .+ brckQ4[1:end-20] .+ brckQ5[1:end-20]
+plot!(turn_pts_indx[40 .< turn_pts_indx .< 110],avg_bRCK4[40 .< turn_pts_indx .< 110], label = "Prosek iteracija 1-5", line=(:dot, 4))
+plot!(t[1:end-20], avg_brckQ ./ 6, line=(:dot, 4))
+
+savefig("eckhart vs ognjen vs mei")
+
+export_as_csv_file(turn_pts_indx, b_rck, b_rck1, b_rck2, b_rck3, "mitrovica_brck.csv")
+export_as_csv_file(turn_pts_indx_passed, b_en_turning_points_passed, "mitrovica_points_passed_075.csv")
+export_as_csv_file(t, brckQ, brckQ1, brckQ2, brckQ3, "mitrovicaEckhartMethod.csv")
+
